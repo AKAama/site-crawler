@@ -4,7 +4,6 @@ import duckdb
 import time
 import argparse
 import yaml
-import os
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
@@ -152,10 +151,14 @@ def main():
     # 创建或连接到DuckDB数据库
     conn = duckdb.connect(db_path)
     
+    # 创建序列用于自动生成ID
+    conn.execute('CREATE SEQUENCE IF NOT EXISTS article_urls_id_seq')
+    
     # 创建表（如果不存在）
     conn.execute('''
         CREATE TABLE IF NOT EXISTS article_urls (
-            url VARCHAR PRIMARY KEY,
+            id INTEGER PRIMARY KEY DEFAULT nextval('article_urls_id_seq'),
+            url VARCHAR UNIQUE NOT NULL,
             title VARCHAR,
             publish_time VARCHAR,
             list_url VARCHAR NOT NULL,
@@ -225,94 +228,6 @@ def main():
     conn.close()
     
     print(f'数据库中存储了 {total_in_db} 个唯一URL')
-
-# 作为模块导入时可直接调用的函数
-def run_crawler(start_page=1, end_page=1683, base_url_pattern='https://news.ruc.edu.cn/zonghexinwen-{page}.html', 
-               first_page_url='https://news.ruc.edu.cn/zonghexinwen.html', max_workers=10, db_path='./data/site_info.duckdb'):
-    """
-    运行爬虫的函数接口
-    
-    参数:
-        start_page: 起始页码
-        end_page: 结束页码
-        base_url_pattern: 列表页URL模式，使用{page}作为页码占位符
-        first_page_url: 第一页的特殊URL（如果有）
-        max_workers: 最大线程数
-        db_path: 数据库文件路径
-    """
-    # 创建或连接到DuckDB数据库
-    conn = duckdb.connect(db_path)
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS article_urls (
-            url VARCHAR PRIMARY KEY,
-            title VARCHAR,
-            publish_time VARCHAR,
-            list_url VARCHAR NOT NULL,
-            crawled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.close()
-    
-    total_pages = end_page - start_page + 1
-    start_time = time.time()
-    total_urls = 0
-    
-    print(f'开始爬取 {start_page} 到 {end_page} 页，共 {total_pages} 页')
-    print(f'列表页URL模式: {base_url_pattern}')
-    if first_page_url:
-        print(f'第一页特殊URL: {first_page_url}')
-    print(f'使用 {max_workers} 个线程')
-    
-    # 使用线程池执行爬取任务
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # 提交所有任务
-        future_to_page = {}
-        for page in range(start_page, end_page + 1):
-            future = executor.submit(crawl_page, page, base_url_pattern, first_page_url)
-            future_to_page[future] = page
-        
-        # 处理完成的任务
-        for future in as_completed(future_to_page):
-            page = future_to_page[future]
-            try:
-                list_url, article_urls = future.result()
-                
-                # 将提取的URL、标题和发布时间存储到数据库（线程安全）
-                if article_urls:
-                    with db_lock:
-                        conn = duckdb.connect(db_path)
-                        try:
-                            for item in article_urls:
-                                # 确保item是字典类型
-                                if isinstance(item, dict):
-                                    conn.execute(
-                                        'INSERT OR IGNORE INTO article_urls (url, title, publish_time, list_url) VALUES (?, ?, ?, ?)', 
-                                        [item.get('url', ''), item.get('title', ''), item.get('publish_time', ''), list_url]
-                                    )
-                            conn.commit()
-                        finally:
-                            conn.close()
-                
-                total_urls += len(article_urls)
-                print(f'第 {page} 页提取了 {len(article_urls)} 个URL')
-            except Exception as e:
-                print(f'第 {page} 页处理出错: {e}')
-    
-    end_time = time.time()
-    
-    # 最终统计
-    print(f'\n爬取完成！')
-    print(f'总耗时: {end_time - start_time:.2f} 秒')
-    print(f'共爬取 {total_pages} 页')
-    print(f'共提取 {total_urls} 个URL')
-    
-    # 验证数据库中的总数
-    conn = duckdb.connect(db_path)
-    total_in_db = conn.execute('SELECT COUNT(*) FROM article_urls').fetchone()[0]
-    conn.close()
-    
-    print(f'数据库中存储了 {total_in_db} 个唯一URL')
-    return total_in_db
 
 if __name__ == '__main__':
     main()
