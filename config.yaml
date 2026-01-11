@@ -1,0 +1,6 @@
+dbPath: ./data/site_info.duckdb
+baseUrl: https://news.ruc.edu.cn/zonghexinwen-{page}.html
+firstPageUrl: https://news.ruc.edu.cn/zonghexinwen.html
+maxWorkers: 20
+startPage: 1
+endPage: 100
